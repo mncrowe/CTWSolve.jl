@@ -1,3 +1,5 @@
+# Note: this is an example of how to use the code. However, I'd be very surprised if the answers it gave were not nonsense due to difficulties with arpack being not as good as I'd like it to be.
+
 include("CTWSolve.jl")
 
 # Grid parameters:
@@ -47,6 +49,7 @@ println("Solving EVP ...")
 # Plot a mode:
 
 # heatmap(grid.y[:, 1], grid.z[1, :], real(p[:, :, 1]))
+
 
 
 

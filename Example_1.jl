@@ -1,4 +1,12 @@
-# Note: this is an example of how to use the code. However, I'd be very surprised if the answers it gave were not nonsense due to difficulties with arpack being not as good as I'd like it to be.
+"""
+Note: this is an example of how to use the code. However, I'd be very surprised if the answers
+it gave were not nonsense due to difficulties with arpack being not as good as I'd like it to be.
+
+This implementation does allow for viscous boundary conditions and non-constant viscosity. These
+lead to a damping of the modes so a negative imaginary part for ω. They can be commented out/
+deleted to recover the usual inviscid problem.
+
+"""
 
 include("CTWSolve.jl")
 
@@ -49,6 +57,7 @@ println("Solving EVP ...")
 # Plot a mode:
 
 # heatmap(grid.y[:, 1], grid.z[1, :], real(p[:, :, 1]))
+
 
 
 

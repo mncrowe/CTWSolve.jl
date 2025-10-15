@@ -240,7 +240,7 @@ end
 
 type argument: :chebyshev, :laguerre, [:.., :..] (for composite), :fourier
 
-Define the numerical grid as a [`GridStruct3D`](@ref)
+Define the numerical grid as a [`GridStruct`](@ref)
 
 # Arguments:
  - `Ny`, `Nz`: number of gridpoints in y and z directions, Integers
@@ -872,3 +872,4 @@ end
 
 
 # Use Plots, write function to interpolate onto a rectilinear grid
+

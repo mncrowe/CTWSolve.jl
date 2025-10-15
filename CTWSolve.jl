@@ -807,7 +807,7 @@ function GenEVP(A::AbstractMatrix,
                 n::Int,
                 ω₀::Number)
 
-    ω′, ϕ = eigs(A, B - ω₀ * A; nev = n, maxiter = 1000, which = :LR)
+    ω′, ϕ = eigs(A, B - ω₀ * A; nev = n, maxiter = 1000, which = :LM)
 
     ω = ω₀ .+ 1 ./ ω′
 
@@ -869,5 +869,6 @@ end
 # Do show and summary functions for domain, params and problem
 
 # Plotting (CairoMakie): surface(X, Y, zeros(size(Z)), color = Z, shading = NoShading, interpolate = true)
+
 
 # Use Plots, write function to interpolate onto a rectilinear grid

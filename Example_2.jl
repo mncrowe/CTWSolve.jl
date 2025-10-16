@@ -1,12 +1,18 @@
-# Actually works :o
+"""
+Waves in a channel
+
+Uses noflow BC on the walls
+
+"""
+
 
 include("CTWSolve.jl")
 
 # Grid parameters:
 
-Ny, Nz = 41, 41
-Ly = [0, 3]
-type = :laguerre
+Ny, Nz = [21, 21], 41
+Ly = [-0.1, 0, 0.1]
+type = [:chebyshev, :chebyshev]
 
 # Numerical EVP parameters:
 
@@ -17,11 +23,12 @@ n = 5
 # Problem parameters:
 
 f = 1
-H₀ = 0.2
-H(y) = H₀ + (1 - H₀) * tanh.(y)
-U(y, z) = 0
-M²(y, z) = 0
 N²(y, z) = 1
+H(y) = 1 + 0.1 * tanh(y)
+
+# Boundary conditions [top, bottom, left, right]:
+
+NormalFlowBCs = [:noflow, :noflow, :noflow, :noflow]
 
 # Create grid:
 
@@ -31,13 +38,18 @@ grid = CreateGrid(Ny, Nz, Ly, H; type)
 # Create EVP:
 
 println("Building EVP ...")
-prob = CreateProblem(grid; f, U, N²)
+prob = CreateProblem(grid; f, N², NormalFlowBCs)
 
 # Solve EVP:
 
 println("Solving EVP ...")
 ω, p = SolveProblem(prob, k; ω₀, n)
 
+nothing
+
 # Plot a mode:
 
 # heatmap(grid.y[:, 1], grid.z[1, :], real(p[:, :, 1]))
+
+
+

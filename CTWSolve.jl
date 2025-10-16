@@ -176,12 +176,13 @@ end
 
 """
 struct GridStruct
-    Ny::Int
+    Ny::Union{Int,Vector{Int}}
     Nz::Int
     y::Array
     z::Array
     Ly::Vector
     H::Function
+    Hy::Union{Function,Nothing}
     λ::Vector
     ζ::Vector
     Mλ::SparseMatrixCSC
@@ -192,7 +193,7 @@ end
 """
     ParamsStruct
 
-store the various fields and problem parameters
+Store the problem parameters
 
 """
 struct ParamsStruct
@@ -200,35 +201,61 @@ struct ParamsStruct
     g::Number
     δh::Number
     δa::Number
+    U::Union{Nothing,Array,Function}
+    V::Union{Nothing,Array,Function}
+    W::Union{Nothing,Array,Function}
+    N²::Union{Nothing,Array,Function}
+    M²::Union{Nothing,Array,Function}
+    νh::Union{Nothing,Array,Function}
+    νv::Union{Nothing,Array,Function}
+    κh::Union{Nothing,Array,Function}
+    κv::Union{Nothing,Array,Function}
+    Uy::Union{Nothing,Array,Function}
+    Uz::Union{Nothing,Array,Function}
+    Vy::Union{Nothing,Array,Function}
+    Vz::Union{Nothing,Array,Function}
+    Wy::Union{Nothing,Array,Function}
+    Wz::Union{Nothing,Array,Function}
+end
+
+"""
+   FieldStruct
+
+Store the matrix fields for building the problem
+
+"""
+struct FieldStruct
     H::Vector
-    U₀::SparseMatrixCSC
-    V₀::SparseMatrixCSC
-    W₀::SparseMatrixCSC
-    N²₀::SparseMatrixCSC
-    M²₀::SparseMatrixCSC
-    νh₀::SparseMatrixCSC
-    νv₀::SparseMatrixCSC
-    κh₀::SparseMatrixCSC
-    κv₀::SparseMatrixCSC
+    Hy::Vector
+    U::SparseMatrixCSC
+    V::SparseMatrixCSC
+    W::SparseMatrixCSC
+    N²::SparseMatrixCSC
+    M²::SparseMatrixCSC
+    νh::SparseMatrixCSC
+    νv::SparseMatrixCSC
+    κh::SparseMatrixCSC
+    κv::SparseMatrixCSC
     Uy::SparseMatrixCSC
     Uz::SparseMatrixCSC
     Vy::SparseMatrixCSC
     Vz::SparseMatrixCSC
     Wy::SparseMatrixCSC
     Wz::SparseMatrixCSC
+    Dy::SparseMatrixCSC
+    Dz::SparseMatrixCSC
 end
 
 """
     ProblemStruct
 
-store the matrices in a k-independent way (i.e. k coefficients Li in L = L0 + k*L1 + k^2*L2 etc)
+Stores the matrices in a k-independent way (i.e. k coefficients Li in L = L0 + k*L1 + k^2*L2 etc).
 
 """
 struct ProblemStruct
     grid::GridStruct
     params::ParamsStruct
-    Dy::SparseMatrixCSC
-    Dz::SparseMatrixCSC
+    fields::FieldStruct
     D::SparseMatrixCSC
     L₀::SparseMatrixCSC
     L₁::SparseMatrixCSC
@@ -236,7 +263,7 @@ struct ProblemStruct
 end
 
 """
-    CreateGrid(Ny, Nz, Ly, H; type)
+    CreateGrid(Ny, Nz, Ly, H; Hy, type)
 
 type argument: :chebyshev, :laguerre, [:.., :..] (for composite), :fourier
 
@@ -245,9 +272,10 @@ Define the numerical grid as a [`GridStruct`](@ref)
 # Arguments:
  - `Ny`, `Nz`: number of gridpoints in y and z directions, Integers
  - `Ly`, `Lz`: ...
+ - `H`: function
 
 # Keyword arguments:
- - `H`: function
+ - `Hy`: function or nothing
  - `type`: :chebyshev or :laguerre
 """
 function CreateGrid(
@@ -255,7 +283,8 @@ function CreateGrid(
     Nz::Int,
     Ly::Vector,
     H::Function = y -> 1;
-    type = :chebyshev
+    Hy::Union{Function,Nothing} = nothing,
+    type = :laguerre
 )
 
     if type isa Vector
@@ -285,9 +314,7 @@ function CreateGrid(
 
     y, z = λ .* ones(1, Nz), H.(λ) .* ζ'
 
-    Ny = sum(Ny) - length(Ny) + 1
-
-    return GridStruct(Ny, Nz, y, z, Ly, H, λ, ζ, sparse(Mλ), sparse(Mζ), type)    
+    return GridStruct(Ny, Nz, y, z, Ly, H, Hy, λ, ζ, sparse(Mλ), sparse(Mζ), type)    
 
 end
 
@@ -330,6 +357,12 @@ function CreateProblem(grid;
                        νv::Union{Nothing,Array,Function} = nothing,
                        κh::Union{Nothing,Array,Function} = nothing,
                        κv::Union{Nothing,Array,Function} = nothing,
+                       Uy::Union{Nothing,Array,Function} = nothing,
+                       Vy::Union{Nothing,Array,Function} = nothing,
+                       Wy::Union{Nothing,Array,Function} = nothing,
+                       Uz::Union{Nothing,Array,Function} = nothing,
+                       Vz::Union{Nothing,Array,Function} = nothing,
+                       Wz::Union{Nothing,Array,Function} = nothing,
                        NormalFlowBCs::Vector{Symbol} = [:noflow, :noflow, :noflow, :none],
                        NormalStressBCs::Vector{Symbol} = [:none, :none, :none, :none],
                        NormalFluxBCs::Vector{Symbol} = [:none, :none, :none, :none],
@@ -347,13 +380,21 @@ function CreateProblem(grid;
     Ny, Nz = grid.Ny, grid.Nz
     y, z = grid.y, grid.z
 
+    # Calculate total length in y direction:
+    Ny = sum(Ny) - length(Ny) + 1
+
     # Use grid to create Dy and Dz:
 
     Iy, Iz, I₀ = sparse(I(Ny)), sparse(I(Nz)), sparse(I(Ny * Nz))
     Oy, Oz, O = spzeros(Ny, Ny), spzeros(Nz, Nz), spzeros(Ny * Nz, Ny * Nz)
 
     H = grid.H.(grid.λ)
-    Hy = grid.Mλ * (H .- H[end])
+    
+    if grid.Hy isa Nothing
+        Hy = grid.Mλ * (H .- H[end])
+    else
+        Hy = grid.Hy.(grid.λ)
+    end
 
     Dy = kron(Iz, grid.Mλ) - kron(spdiagm(grid.ζ) * grid.Mζ, spdiagm(Hy ./ H))
     Dz = kron(grid.Mζ, spdiagm(1 ./ H))
@@ -378,13 +419,49 @@ function CreateProblem(grid;
 
     # Create gradients of background flow:
 
-    Uy, Uz = spdiagm(Dy * (diag(U₀) .- U₀[end, end])), spdiagm(Dz * diag(U₀))
-    Vy, Vz = spdiagm(Dy * (diag(V₀) .- V₀[end, end])), spdiagm(Dz * diag(V₀))
-    Wy, Wz = spdiagm(Dy * (diag(W₀) .- W₀[end, end])), spdiagm(Dz * diag(W₀))
+    if Uy isa Nothing
+        Uy₀ = spdiagm(Dy * (diag(U₀) .- U₀[end, end]))
+    else
+        Uy₀ = CreateDiagField(Uy, y, z)
+    end
 
+    if Vy isa Nothing
+        Vy₀ = spdiagm(Dy * (diag(V₀) .- V₀[end, end]))
+    else
+        Vy₀ = CreateDiagField(Vy, y, z)
+    end
+
+    if Wy isa Nothing
+        Wy₀ = spdiagm(Dy * (diag(W₀) .- W₀[end, end]))
+    else
+        Wy₀ = CreateDiagField(Wy, y, z)
+    end
+
+    if Uz isa Nothing
+        Uz₀ = spdiagm(Dz * diag(U₀))
+    else
+        Uz₀ = CreateDiagField(Uz, y, z)
+    end
+
+    if Vz isa Nothing
+        Vz₀ = spdiagm(Dz * diag(V₀))
+    else
+        Vz₀ = CreateDiagField(Vz, y, z)
+    end
+
+    if Wz isa Nothing
+        Wz₀ = spdiagm(Dz * diag(W₀))
+    else
+        Wz₀ = CreateDiagField(Wz, y, z)
+    end
+ 
     # Create parameter structure:
 
-    params = ParamsStruct(f, g, δh, δa, H, U₀, V₀, W₀, N²₀, M²₀, νh₀, νv₀, κh₀, κv₀, Uy, Uz, Vy, Vz, Wy, Wz)
+    params = ParamsStruct(f, g, δh, δa, U, V, W, N², M², νh, νv, κh, κv, Uy, Uz, Vy, Vz, Wy, Wz)
+
+    # Create field structure:
+
+    fields = FieldStruct(H, Hy, U₀, V₀, W₀, N²₀, M²₀, νh₀, νv₀, κh₀, κv₀, Uy₀, Uz₀, Vy₀, Vz₀, Wy₀, Wz₀, Dy, Dz)
 
     # Build linear system matrices:
 
@@ -392,8 +469,8 @@ function CreateProblem(grid;
     Lκ = V₀ * Dy + W₀ * Dz - Dy * κh₀ * Dy - Dz * κv₀ * Dz
 
     D = [I₀ O O O O; O I₀ O O O; O O δh*I₀ O O; O O O I₀ O; O O O O O]
-    L₀ = [O Uy-f*I₀ Uz O O; -f*I₀ O O O -Dy; O O O I₀ -Dz; O M²₀ N²₀ O O; O Dy Dz O O] -
-         im * [Lν O O O O; O Lν+Vy Vz O O; O δh*Wy δh*(Lν+Wz) O O; O O O Lκ O; O O O O O]
+    L₀ = [O Uy₀-f*I₀ Uz₀ O O; -f*I₀ O O O -Dy; O O O I₀ -Dz; O M²₀ N²₀ O O; O Dy Dz O O] -
+         im * [Lν O O O O; O Lν+Vy₀ Vz₀ O O; O δh*Wy₀ δh*(Lν+Wz₀) O O; O O O Lκ O; O O O O O]
     L₁ = [U₀ O O O I₀; O U₀ O O O; O O δh*U₀ O O; O O O U₀ O; I₀ O O O O]
     L₂ = -im * [νh₀ O O O O; O νh₀ O O O; O O δh*νh₀ O O; O O O κh₀ O; O O O O O]
 
@@ -651,7 +728,7 @@ function CreateProblem(grid;
 
     # Return problem as structure:
 
-    return ProblemStruct(grid, params, Dy, Dz, D, L₀, L₁, L₂)
+    return ProblemStruct(grid, params, fields, D, L₀, L₁, L₂)
 
 end
 
@@ -766,6 +843,8 @@ function ToField(F::Array, Ny::Int, Nz::Int)
 
 end
 
+ToField(F::SparseMatrixCSC, Ny, Nz) = ToField(Array(F), Ny, Nz)
+
 """
     SolveProblem(problem, k; n, ω₀)
 
@@ -779,14 +858,22 @@ function SolveProblem(prob::ProblemStruct,
                       ω₀::Number = prob.params.f / π
 )
 
+    # Get problem size:
     Ny, Nz = grid.Ny, grid.Nz
 
+    # Calculate total length in y direction:
+    Ny = sum(Ny) - length(Ny) + 1
+
+    # Calculate RHS matrix L for given k value:
     L = prob.L₀ + k * prob.L₁ + k^2 * prob.L₂
 
+    # Solve EVP for frequency ω and mode structure ϕ:
     ω, ϕ = GenEVP(prob.D, L, n, ω₀)
 
+    # Reshape to Ny x Nz fields:
     ϕ = reshape(ϕ, Ny, Nz, 5, n)
 
+    # Define u ,v, w, b, p from ϕ:
     u, v, w, b, p = ϕ[:, :, 1, :], im * ϕ[:, :, 2, :], im * ϕ[:, :, 3, :], ϕ[:, :, 4, :], ϕ[:, :, 5, :]
 
     return ω, p, u, v, w, b
@@ -807,69 +894,114 @@ function GenEVP(A::AbstractMatrix,
                 n::Int,
                 ω₀::Number)
 
+    # Pass problem to Arpack, we look for eigenvalues close to ω₀:
     ω′, ϕ = eigs(A, B - ω₀ * A; nev = n, maxiter = 1000, which = :LM)
 
+    # Determine ω from ω′:
     ω = ω₀ .+ 1 ./ ω′
 
     return ω, ϕ
 
 end
 
-
-
 """
-Base.summary function for custom type [`GridStruct3D`](@ref)
+    Base.summary function for custom type GridStruct
+
 """
 function Base.summary(g::GridStruct)
-
-    #Nx, Ny, Nz = length(g.x), length(g.y), length(g.z)
-
-    #return string("Domain with (Nx, Ny, Nz) = ", (Nx, Ny, Nz))
-
-    return string("Domain object ...")
+    return string("Grid structure for wave/instability problem with (Ny, Nz) = ", (g.Ny, g.Nz), ".")
 end
 
 """
-Base.show function for custom type [`GridStruct3D`](@ref)
+    Base.summary function for custom type ParamsStruct
+
+"""
+function Base.summary(g::ParamsStruct)
+    return string("Parameter structure for wave/instability problem.")
+end
+
+"""
+    Base.summary function for custom type FieldStruct
+
+"""
+function Base.summary(g::FieldStruct)
+    return string("Field/operator structure for wave/instability problem.")
+end
+
+"""
+    Base.summary function for custom type ProblemStruct
+
+"""
+function Base.summary(g::ProblemStruct)
+    return string("Problem structure for wave/instability problem.")
+end
+
+"""
+    Base.show function for custom type GridStruct
+
 """
 function Base.show(io::IO, g::GridStruct)
+    return print(io,
+                 "GridStruct\n",
+                 "  ├─────── size (Ny, Nz): ", (g.Ny, g.Nz), "\n",
+                 "  ├───────── segments Ly: ", g.Ly, "\n",
+                 "  ├──────────────── type: ", g.type, "\n",
+                 "  └──────── Hy specified: ", ~(g.Hy isa Nothing),
+    )
+end
 
-    #Nx, Ny, Nz = length(g.x), length(g.y), length(g.z)
-    #Δx, Δy = g.x[2] - g.x[1], g.y[2] - g.y[1]
-    #Lx, Ly, Lz = Nx * Δx, Ny * Δy, g.z[end] - g.z[1]
+"""
+    Base.show function for custom type ParamsStruct
 
-    #return print(
-    #    io,
-    #    "GridStruct3D\n",
-    #    "  ├────────────────────── device: ",
-    #    1,
-    #    "\n",
-    #    "  ├─────────── size (Lx, Ly, Lz): ",
-    #    (Lx, Ly, Lz),
-    #    "\n",
-    #    "  ├───── resolution (Nx, Ny, Nz): ",
-    #    (Nx, Ny, Nz),
-    #    "\n",
-    #    "  ├─────── grid spacing (Δx, Δy): ",
-    #    (Δx, Δy),
-    #    "\n",
-    #    "  └────────────────────── domain: x ∈ [$(g.x[1]), $(g.x[end])]",
-    #    "\n",
-    #    "                                  y ∈ [$(g.y[1]), $(g.y[end])]",
-    #    "\n",
-    #    "                                  z ∈ [$(g.z[1]), $(g.z[end])]",
-    #)
+"""
+function Base.show(io::IO, g::ParamsStruct)
+    return print(io,
+                 "ParamsStruct\n",
+                 "  ├───────────────── Coriolis parameter f: ", g.f, "\n",
+                 "  ├───────── gravitational acceleration g: ", g.g, "\n",
+                 "  ├───────────── hydrostatic parameter δh: ", g.δh, "\n",
+                 "  ├──────────── free surface parameter δa: ", g.δa, "\n",
+                 "  ├───── x velocity specified (U, Uy, Uz): ", (~(g.U isa Nothing), ~(g.Uy isa Nothing), ~(g.Uz isa Nothing)), "\n",
+                 "  ├───── y velocity specified (V, Vy, Vz): ", (~(g.V isa Nothing), ~(g.Vy isa Nothing), ~(g.Vz isa Nothing)), "\n",
+                 "  ├───── z velocity specified (W, Wy, Wz): ", (~(g.W isa Nothing), ~(g.Wy isa Nothing), ~(g.Wz isa Nothing)), "\n",
+                 "  ├─ buoyancy gradient specified (N², M²): ", (~(g.N² isa Nothing), ~(g.M² isa Nothing)), "\n",
+                 "  ├───────── viscosity specified (νh, νv): ", (~(g.νh isa Nothing), ~(g.νv isa Nothing)), "\n",
+                 "  └─────── diffusivity specified (κh, κv): ", (~(g.κh isa Nothing), ~(g.κv isa Nothing)),
+    )
+end
 
-    return print(io, "Domain object ...")
+"""
+    Base.show function for custom type FieldStruct
 
+"""
+function Base.show(io::IO, g::FieldStruct)
+
+    Ny = length(g.H)
+    Nz = Int(size(g.U)[1] / Ny)
+
+    return print(io,
+                 "FieldStruct\n",
+                 "  └─────── field size (Ny, Nz): ", (Ny, Nz),
+    )
+end
+
+"""
+    Base.show function for custom type ProblemStruct
+
+"""
+function Base.show(io::IO, g::ProblemStruct)
+    return print(io,
+                 "ProblemStruct\n",
+                 "  ├─── real (D, L₀, L₁, L₂): ", (isreal(g.D), isreal(g.L₀), isreal(g.L₁), isreal(g.L₂)), "\n",
+                 "  └──────────── matrix size: ", size(g.D),
+    )
 end
 
 
 
-# Do show and summary functions for domain, params and problem
+
+
 
 # Plotting (CairoMakie): surface(X, Y, zeros(size(Z)), color = Z, shading = NoShading, interpolate = true)
 
-
 # Use Plots, write function to interpolate onto a rectilinear grid
-

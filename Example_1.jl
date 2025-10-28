@@ -3,26 +3,31 @@ Basic shelf wave example
 
 Actually works :o
 
+This script determines the dispersion curve ω = ω(k) for 
+k ∈ [0.1, 3]. We use ω₀ as an initial guess for ω and take
+ω₀ = 0.5*tanh.(k/2) here. Simpler ω₀ will also work, e.g.
+ω₀ = 0.5*ones(length(k)) but will generally be slower.
+
 """
 
 include("CTWSolve.jl")
 
 # Grid parameters:
 
-Ny, Nz = 41, 41
-Ly = [0, 3]
+Ny, Nz = 31, 21
+Ly = [0, 4]
 type = :laguerre
 
 # Numerical EVP parameters:
 
-k = 1.0
-ω₀ = 0.3
-n = 5
+k = 0.1:0.1:3
+ω₀ = 0.5*tanh.(k/2)
+n = 6
 
 # Problem parameters:
 
 f = 1
-H₀ = 0.2
+H₀ = 0.7
 H(y) = H₀ + (1 - H₀) * tanh.(y)
 U(y, z) = 0
 N²(y, z) = 1
@@ -37,13 +42,9 @@ grid = CreateGrid(Ny, Nz, Ly, H; type)
 println("Building EVP ...")
 prob = CreateProblem(grid; f, U, N²)
 
-# Solve EVP:
+# Solve EVP for dispersion curves:
 
 println("Solving EVP ...")
-ω, p = SolveProblem(prob, k; ω₀, n)
+ω = DispersionCurve(prob, k; n, ω₀, method = :all)
 
 nothing
-
-# Plot a mode:
-
-# heatmap(grid.y[:, 1], grid.z[1, :], real(p[:, :, 1]))

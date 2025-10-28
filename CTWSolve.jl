@@ -846,7 +846,7 @@ end
 ToField(F::SparseMatrixCSC, Ny, Nz) = ToField(Array(F), Ny, Nz)
 
 """
-    SolveProblem(problem, k; n, ω₀)
+    SolveProblem(problem, k; n, ω₀, getmodes)
 
 solves problem for a given wavenumber k, returns frequency and mode structure
 
@@ -855,7 +855,8 @@ solves problem for a given wavenumber k, returns frequency and mode structure
 function SolveProblem(prob::ProblemStruct,
                       k::Number;
                       n::Int = 10,
-                      ω₀::Number = prob.params.f / π
+                      ω₀::Number = prob.params.f / π,
+                      getmodes::Bool = true
 )
 
     # Get problem size:
@@ -870,13 +871,98 @@ function SolveProblem(prob::ProblemStruct,
     # Solve EVP for frequency ω and mode structure ϕ:
     ω, ϕ = GenEVP(prob.D, L, n, ω₀)
 
+    # Define u ,v, w, b, p from ϕ:
+    if getmodes
+        p, u, v, w, b = ModeStructure(ϕ, ω, Ny, Nz, n)
+    else
+        u = v = w = b = p = nothing
+    end
+
+    # Sort ω in order of decreasing magnitude:
+    sort!(ω, by = x -> -abs(x))
+
+    return ω, p, u, v, w, b
+
+end
+
+"""
+    ModeStructure(ϕ, ω, Ny, Nz, n)
+
+"""
+function ModeStructure(ϕ, ω, Ny, Nz, n)
+
     # Reshape to Ny x Nz fields:
     ϕ = reshape(ϕ, Ny, Nz, 5, n)
 
-    # Define u ,v, w, b, p from ϕ:
-    u, v, w, b, p = ϕ[:, :, 1, :], im * ϕ[:, :, 2, :], im * ϕ[:, :, 3, :], ϕ[:, :, 4, :], ϕ[:, :, 5, :]
+    # Sort eigenvalues in decreasing order:
+    ϕ = ϕ[:, :, :, sortperm(ω, by = x -> -abs(x))]
 
-    return ω, p, u, v, w, b
+    # Define u ,v, w, b, p from ϕ:
+    u =      ϕ[:, :, 1, :]
+    v = im * ϕ[:, :, 2, :]
+    w = im * ϕ[:, :, 3, :]
+    b =      ϕ[:, :, 4, :]
+    p =      ϕ[:, :, 5, :]
+
+    return p, u, v, w, b
+
+end
+
+
+"""
+    DispersionCurve(prob, k; n, ω₀, method)
+
+"""
+function DispersionCurve(prob::ProblemStruct,
+                      k::AbstractVector;
+                      n::Int = 10,
+                      ω₀::Union{Number,AbstractVector} = prob.params.f / π,
+                      method::Symbol = :closest
+)
+
+    @assert method in (:closest, :all, :closest_real, :closest_imag)
+
+    if method == :all
+        ω = im * zeros(length(k), n)
+    else
+        ω = im * zeros(length(k))
+    end
+
+    if length(ω₀) < length(k)
+        ω₀ = [ω₀; zeros(length(k) - length(ω₀))]
+    end
+
+    for i in 1:length(k)
+
+        if ω₀[i] == 0
+            if i > 2
+                ω₀[i] = 2 * maximum(ω[i - 1, :]) - maximum(ω[i - 2, :])
+            else
+                ω₀[i] = k[2] / k[1] * maximum(ω[i - 1, :])
+            end
+        end
+
+        println("Solving for k = " * string(k[i]) * ", ω₀ = " * string(ω₀[i]))
+
+        ω₁, = SolveProblem(prob, k[i]; n, ω₀ = ω₀[i], getmodes = false)
+
+        if method == :closest
+            ω[i] = ω₁[findmin(abs.(ω₁ .- ω₀[i]))[2]]
+        elseif method == :all
+            ω[i, :] = ω₁
+        elseif method == :closest_real
+            ω[i] = ω₁[findmin(abs.(real(ω₁ .- ω₀[i])))[2]]
+        elseif method == :closest_imag
+            ω[i] = ω₁[findmin(abs.(imag(ω₁ .- ω₀[i])))[2]]
+        end
+
+    end
+
+    if maximum(abs.(imag(ω) / real(ω))) < 1e-6
+        ω = real(ω)
+    end
+
+    return ω
 
 end
 
